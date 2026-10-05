@@ -1,57 +1,60 @@
+from datetime import datetime
+from pathlib import Path
+import time
+
 import cv2
 
-from config import CAMERA_SOURCE, MODEL_PATH
-from database.db import init_database, prune_old_events
-from detector import WarehouseDetector
-from logger import EventLogger
+from config import EVENT_DIR
+from database.db import insert_event
 
 
-def main():
-    print("=" * 60)
-    print("SMART WAREHOUSE")
-    print("Safety & Inventory Management System")
-    print("=" * 60)
+class EventLogger:
+    def __init__(self):
+        self.event_dir = Path(EVENT_DIR)
+        self.event_dir.mkdir(parents=True, exist_ok=True)
+        self._last_events = {}
 
-    init_database()
-    prune_old_events()
+    def _is_duplicate_event(self, event_type, center):
+        if center is None:
+            return False
 
-    detector = WarehouseDetector(str(MODEL_PATH))
-    logger = EventLogger()
+        now = time.time()
+        key = (event_type, int(center[0] // 50), int(center[1] // 50))
+        last = self._last_events.get(key)
 
-    cap = cv2.VideoCapture(CAMERA_SOURCE)
+        if last is not None:
+            last_time, last_center = last
+            if (now - last_time) < 5:
+                if (
+                    abs(center[0] - last_center[0]) <= 50
+                    and abs(center[1] - last_center[1]) <= 50
+                ):
+                    return True
 
-    if not cap.isOpened():
-        print("ERROR: ไม่สามารถเปิดกล้องได้")
-        return
+        self._last_events[key] = (now, center)
+        return False
 
-    print("เปิดกล้องสำเร็จ")
-    print("กด Q เพื่อออก")
+    def log_event(self, event_type, confidence, frame, center=None):
+        if center is not None and self._is_duplicate_event(event_type, center):
+            return False
 
-    while True:
-        ret, frame = cap.read()
+        timestamp = datetime.now()
+        filename = timestamp.strftime("%Y%m%d_%H%M%S_%f") + ".jpg"
+        image_path = self.event_dir / filename
 
-        if not ret:
-            print("ERROR: อ่านภาพจากกล้องไม่ได้")
-            break
+        cv2.imwrite(str(image_path), frame)
 
-        result = detector.process(frame)
-        annotated = result["frame"]
-        cv2.imshow("Smart Warehouse", annotated)
+        insert_event(
+            timestamp=timestamp.isoformat(timespec="seconds"),
+            event_type=event_type,
+            confidence=confidence,
+            image_path=str(image_path),
+            camera="CAM-01",
+        )
 
-        for event in result["events"]:
-            logger.log_event(
-                event_type=event["event_type"],
-                confidence=event["confidence"],
-                frame=annotated,
-                center=event.get("center"),
-            )
-
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    main()
+        print(
+            f"[EVENT] {event_type} | "
+            f"confidence={confidence:.2f} | "
+            f"{image_path}"
+        )
+        return True
