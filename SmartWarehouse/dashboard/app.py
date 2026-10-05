@@ -1,58 +1,43 @@
-import sys
-from pathlib import Path
-
-import pandas as pd
-import streamlit as st
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(ROOT))
-
-from database.db import init_database, get_events, get_inventory
+from database.db import get_connection
 
 
-st.set_page_config(
-    page_title="Smart Warehouse Dashboard",
-    page_icon="🏭",
-    layout="wide"
-)
+def add_product(product_code, product_name, quantity, location):
+    conn = get_connection()
 
-init_database()
-
-st.title("🏭 Smart Warehouse Dashboard")
-st.caption("Safety & Inventory Management System")
-
-events = get_events(200)
-inventory = get_inventory()
-
-event_types = [row[3] for row in events]
-
-col1, col2, col3, col4 = st.columns(4)
-
-col1.metric("Total Events", len(events))
-col2.metric("No Helmet", event_types.count("NO_HELMET"))
-col3.metric("No Vest", event_types.count("NO_VEST"))
-col4.metric("Danger Zone", event_types.count("DANGER_ZONE"))
-
-st.divider()
-
-st.subheader("Safety Events")
-
-if events:
-    df = pd.DataFrame(
-        events,
-        columns=["ID", "Timestamp", "Camera", "Event", "Confidence", "Image"]
+    conn.execute(
+        """
+        INSERT INTO inventory
+        (product_code, product_name, quantity, location)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(product_code)
+        DO UPDATE SET
+            product_name = excluded.product_name,
+            quantity = excluded.quantity,
+            location = excluded.location
+        """,
+        (product_code, product_name, quantity, location),
     )
-    st.dataframe(df, use_container_width=True)
-else:
-    st.info("ยังไม่มีข้อมูล Event")
 
-st.subheader("Inventory")
+    conn.commit()
+    conn.close()
 
-if inventory:
-    inventory_df = pd.DataFrame(
-        inventory,
-        columns=["ID", "Product Code", "Product Name", "Quantity", "Location"]
+
+def update_quantity(product_code, quantity):
+    conn = get_connection()
+
+    conn.execute(
+        """
+        UPDATE inventory
+        SET quantity = ?
+        WHERE product_code = ?
+        """,
+        (quantity, product_code),
     )
-    st.dataframe(inventory_df, use_container_width=True)
-else:
-    st.info("ยังไม่มีข้อมูล Inventory")
+
+    conn.commit()
+    conn.close()
+
+
+if __name__ == "__main__":
+    add_product("P001", "ตัวอย่างสินค้า", 100, "A-01")
+    print("เพิ่มสินค้า P001 สำเร็จ")
