@@ -1,32 +1,57 @@
-from datetime import datetime
-from pathlib import Path
 import cv2
 
-from config import EVENT_DIR
-from database.db import insert_event
+from config import CAMERA_SOURCE, MODEL_PATH
+from database.db import init_database, prune_old_events
+from detector import WarehouseDetector
+from logger import EventLogger
 
 
-class EventLogger:
-    def __init__(self):
-        Path(EVENT_DIR).mkdir(parents=True, exist_ok=True)
+def main():
+    print("=" * 60)
+    print("SMART WAREHOUSE")
+    print("Safety & Inventory Management System")
+    print("=" * 60)
 
-    def log_event(self, event_type, confidence, frame):
-        timestamp = datetime.now()
-        filename = timestamp.strftime("%Y%m%d_%H%M%S_%f") + ".jpg"
-        image_path = Path(EVENT_DIR) / filename
+    init_database()
+    prune_old_events()
 
-        cv2.imwrite(str(image_path), frame)
+    detector = WarehouseDetector(str(MODEL_PATH))
+    logger = EventLogger()
 
-        insert_event(
-            timestamp=timestamp.isoformat(timespec="seconds"),
-            event_type=event_type,
-            confidence=confidence,
-            image_path=str(image_path),
-            camera="CAM-01"
-        )
+    cap = cv2.VideoCapture(CAMERA_SOURCE)
 
-        print(
-            f"[EVENT] {event_type} | "
-            f"confidence={confidence:.2f} | "
-            f"{image_path}"
-        )
+    if not cap.isOpened():
+        print("ERROR: ไม่สามารถเปิดกล้องได้")
+        return
+
+    print("เปิดกล้องสำเร็จ")
+    print("กด Q เพื่อออก")
+
+    while True:
+        ret, frame = cap.read()
+
+        if not ret:
+            print("ERROR: อ่านภาพจากกล้องไม่ได้")
+            break
+
+        result = detector.process(frame)
+        annotated = result["frame"]
+        cv2.imshow("Smart Warehouse", annotated)
+
+        for event in result["events"]:
+            logger.log_event(
+                event_type=event["event_type"],
+                confidence=event["confidence"],
+                frame=annotated,
+                center=event.get("center"),
+            )
+
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
