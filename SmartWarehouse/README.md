@@ -1,73 +1,68 @@
-# Smart Warehouse Safety & Inventory Management System
+import os
+import sys
+from pathlib import Path
 
-ระบบบริหารจัดการและตรวจจับความปลอดภัยในคลังสินค้าอัจฉริยะ
-ด้วย Computer Vision และ IoT
+import pandas as pd
+import streamlit as st
 
-## ระบบ
-CCTV/Webcam -> OpenCV -> YOLO -> Safety Analysis -> SQLite -> Dashboard
-                                               -> ESP32 Alarm
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(ROOT))
 
-## ส่วนประกอบ
-- Person Detection
-- Helmet / Vest Detection (ใช้ custom YOLO model)
-- Forklift Detection
-- Danger Zone Detection
-- Event Logging
-- SQLite Database
-- Inventory Management
-- Streamlit Dashboard
-- ESP32 Buzzer / Warning Light
-- Webcam / RTSP Camera
+from database.db import get_event_counts, get_events, get_inventory
 
-## ติดตั้ง
-แนะนำ Python 3.12 หรือ 3.13
 
-```powershell
-cd SmartWarehouse
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
+st.set_page_config(
+    page_title="Smart Warehouse Dashboard",
+    page_icon="🏭",
+    layout="wide",
+)
 
-ถ้า Activate ไม่ได้:
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
+st.title("🏭 Smart Warehouse Dashboard")
+st.caption("Safety & Inventory Management System")
 
-## ทดสอบกล้อง
-```powershell
-python scripts/test_camera.py
-```
+raw_events = get_events(200)
+inventory = get_inventory()
+counts = get_event_counts()
 
-## ทดสอบ YOLO
-```powershell
-python scripts/test_yolo.py
-```
 
-## รันระบบหลัก
-```powershell
-python main.py
-```
+def safe_event_counts(event_name):
+    return counts.get(event_name, 0)
 
-## Dashboard
-```powershell
-streamlit run dashboard/app.py
-```
 
-## Training
-วาง dataset ตามโครงสร้างใน dataset/README_DATASET.md แล้วรัน:
-```powershell
-yolo detect train data=dataset/data.yaml model=yolo11n.pt epochs=100 imgsz=640
-```
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Total Events", len(raw_events))
+col2.metric("No Helmet", safe_event_counts("NO_HELMET"))
+col3.metric("No Vest", safe_event_counts("NO_VEST"))
+col4.metric("Danger Zone", safe_event_counts("DANGER_ZONE"))
 
-จากนั้นนำ:
-`runs/detect/warehouse_ppe/weights/best.pt`
-ไปไว้ที่:
-`models/best.pt`
+st.divider()
 
-## หมายเหตุสำคัญ
-yolo11n.pt ที่ดาวน์โหลดจาก Ultralytics ไม่ได้ตรวจ Helmet/Vest โดยตรง
-ต้องใช้ custom dataset และ train model สำหรับงานนี้
+st.subheader("Safety Events")
+if raw_events:
+    event_df = pd.DataFrame(
+        raw_events,
+        columns=["ID", "Timestamp", "Camera", "Event", "Confidence", "Image"],
+    )
+    event_df = event_df.sort_values("ID", ascending=False).reset_index(drop=True)
+    st.dataframe(event_df, use_container_width=True, hide_index=True)
 
-อย่าเดา RTSP URL ของกล้อง Yoosee เพราะแต่ละรุ่นต่างกัน
-ให้ตั้งค่า RTSP หลังจาก webcam pipeline ทำงานแล้ว
+    recent_events = event_df.head(5)
+    st.write("Recent event images")
+    event_cols = st.columns(min(5, len(recent_events)))
+    for idx, row in recent_events.iterrows():
+        image_path = row["Image"]
+        if image_path and os.path.exists(image_path):
+            with event_cols[idx % len(event_cols)]:
+                st.image(image_path, caption=f"{row['Event']} - {row['Timestamp']}", width=220)
+else:
+    st.info("ยังไม่มีข้อมูล Event")
+
+st.subheader("Inventory")
+if inventory:
+    inventory_df = pd.DataFrame(
+        inventory,
+        columns=["ID", "Product Code", "Product Name", "Quantity", "Location"],
+    )
+    st.dataframe(inventory_df, use_container_width=True, hide_index=True)
+else:
+    st.info("ยังไม่มีข้อมูล Inventory")
